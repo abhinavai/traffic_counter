@@ -1,9 +1,10 @@
 import os
 import logging
 import csv
-
+import pandas as pd
 import numpy as np
 import cv2
+import time
 
 from Services.opencv_traffic_counting import utils
 
@@ -12,6 +13,9 @@ BOUNDING_BOX_COLOUR = (255, 0, 0)
 CENTROID_COLOUR = (0, 0, 255)
 CAR_COLOURS = [(0, 0, 255)]
 EXIT_COLOR = (66, 183, 42)
+
+LABELS_ = open("/home/tatras/Documents/GIT PROJECTS/darknet/data/coco.names").read().strip().split("\n")
+net_ = cv2.dnn.readNet("/home/tatras/Documents/GIT PROJECTS/darknet/yolov3.weights","/home/tatras/Documents/GIT PROJECTS/darknet/cfg/yolov3.cfg")
 
 
 class PipelineRunner(object):
@@ -129,10 +133,46 @@ class ContourDetection(PipelineProcessor):
                 continue
 
             centroid = utils.get_centroid(x, y, w, h)
-
             matches.append(((x, y, w, h), centroid))
 
         return matches
+
+    def detect_vehicles_from_yolo(self, fg_mask, context):
+
+        matches = []
+        classIDs = []
+        frame = context['frame']
+        # finding external contours
+        # im2, contours, hierarchy = cv2.findContours(
+        #     fg_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_TC89_L1)
+
+        # for (i, contour) in enumerate(contours):
+        #     (x, y, w, h) = cv2.boundingRect(contour)
+        #     contour_valid = (w >= self.min_contour_width) and (
+        #         h >= self.min_contour_height)
+        yolo_labels = LABELS = open("/home/tatras/Documents/GIT PROJECTS/darknet/data/coco.names").read().strip().split("\n")
+
+        (H_, W_) = frame.shape[:2]
+        ln = net_.getLayerNames()
+        ln = [ln[i[0] - 1] for i in net_.getUnconnectedOutLayers()]
+        blob = cv2.dnn.blobFromImage(frame, 1 / 255.0, (416, 416), swapRB=True, crop=False)
+        net_.setInput(blob)
+        layerOutputs = net_.forward(ln)
+        for output in layerOutputs:
+            for detection in output:
+                scores = detection[5:]
+                classID = np.argmax(scores)
+                confidence = scores[classID]
+                if confidence > 0.25:
+                    box = detection[0:4] * np.array([W_, H_, W_, H_])
+                    (centerX, centerY, width, height) = box.astype("int")
+                    x = int(centerX - (width / 2))
+                    y = int(centerY - (height / 2))
+                    matches.append(((x, y, int(width), int(height)),(centerX,centerY)))
+                    classIDs.append(yolo_labels[classID])
+                else:
+                    continue
+        return matches,classIDs
 
     def __call__(self, context):
         frame = context['frame'].copy()
@@ -143,11 +183,12 @@ class ContourDetection(PipelineProcessor):
         fg_mask[fg_mask < 240] = 0
         fg_mask = self.filter_mask(fg_mask, frame_number)
 
-        if self.save_image:
-            utils.save_frame(fg_mask, self.image_dir +
-                             "/mask_%04d.png" % frame_number, flip=False)
+        # if self.save_image:
+        #     utils.save_frame(fg_mask, self.image_dir +
+        #                      "/mask_%04d.png" % frame_number, flip=False)
 
-        context['objects'] = self.detect_vehicles(fg_mask, context)
+        # context['objects'] = self.detect_vehicles(fg_mask, context)
+        context['objects'],context['class_labels'] = self.detect_vehicles_from_yolo(fg_mask,context)
         context['fg_mask'] = fg_mask
 
         return context
@@ -306,6 +347,7 @@ class CsvWriter(PipelineProcessor):
     def __call__(self, context):
         frame_number = context['frame_number']
         count = _count = context['vehicle_count']
+        labels = context['class_labels']
 
         if self.prev:
             _count = count - self.prev
@@ -344,7 +386,7 @@ class Visualizer(PipelineProcessor):
 
         return img
 
-    def draw_boxes(self, img, pathes, exit_masks=[]):
+    def draw_boxes(self, img, pathes,exit_masks=[],labels=None):
         for (i, match) in enumerate(pathes):
 
             contour, centroid = match[-1][:2]
@@ -355,6 +397,10 @@ class Visualizer(PipelineProcessor):
 
             cv2.rectangle(img, (x, y), (x + w - 1, y + h - 1),
                           BOUNDING_BOX_COLOUR, 1)
+            # text = labels[i]
+            # cv2.putText(img, text, (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX,
+            #             0.5, (255,255,255), 2)
+
             cv2.circle(img, centroid, 2, CENTROID_COLOUR, -1)
 
         return img
@@ -364,7 +410,6 @@ class Visualizer(PipelineProcessor):
         for exit_mask in exit_masks:
             _img = np.zeros(img.shape, img.dtype)
             _img[:, :] = EXIT_COLOR
-            print (exit_mask.shape,_img.shape)
             mask = cv2.bitwise_and(_img, _img, mask=exit_mask)
             cv2.addWeighted(mask, 1, img, 1, 0, img)
 
@@ -372,6 +417,7 @@ class Visualizer(PipelineProcessor):
         cv2.rectangle(img, (0, 0), (img.shape[1], 50), (0, 0, 0), cv2.FILLED)
         cv2.putText(img, ("Vehicles passed: {total} ".format(total=vehicle_count)), (30, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 1)
+
         return img
 
     def __call__(self, context):
@@ -380,10 +426,11 @@ class Visualizer(PipelineProcessor):
         pathes = context['pathes']
         exit_masks = context['exit_masks']
         vehicle_count = context['vehicle_count']
+        class_labels = context['class_labels']
 
         frame = self.draw_ui(frame, vehicle_count, exit_masks)
         frame = self.draw_pathes(frame, pathes)
-        frame = self.draw_boxes(frame, pathes, exit_masks)
+        frame = self.draw_boxes(frame, pathes,exit_masks,labels = class_labels)
 
         utils.save_frame(frame, self.image_dir +
                          "/processed_%04d.png" % frame_number)

@@ -9,6 +9,7 @@ import cv2
 import matplotlib.pyplot as plt
 from flask import jsonify
 from Services.opencv_traffic_counting import utils
+from Services.make_video_on_processed_images import create_video
 # without this some strange errors happen
 cv2.ocl.setUseOpenCL(False)
 random.seed(123)
@@ -19,11 +20,12 @@ from Services.opencv_traffic_counting.pipeline import (PipelineRunner,ContourDet
 
 class Traffic_counter():
 
-    def __init__(self,image_dir,video_source,shape,exits_pts):
+    def __init__(self,image_dir,video_source,shape,exits_pts,make_video):
         self.image_dir = image_dir
         self.video_source = video_source
         self.shape = shape
         self.exit_pts = exits_pts
+        self.make_video = make_video
 
 
     def train_bg_subtractor(self,bg_subtractor, cap,num):
@@ -58,7 +60,7 @@ class Traffic_counter():
             # use x_weight == 2.0 for horizontal.
             VehicleCounter(exit_masks=[exit_mask], y_weight=2.0),
             Visualizer(image_dir=self.image_dir),
-            CsvWriter(path='/Users/abhinavrohilla/', name='/Users/abhinavrohilla/report.csv')
+            CsvWriter(path='/home/tatras/', name='/home/tatras/report.csv')
         ], log_level=logging.DEBUG)
 
         # Set up image source
@@ -66,7 +68,7 @@ class Traffic_counter():
         cap = skvideo.io.vreader(self.video_source)
 
         # skipping 500 frames to train bg subtractor
-        self.train_bg_subtractor(bg_subtractor, cap, num=5)
+        self.train_bg_subtractor(bg_subtractor, cap, num=2)
 
         _frame_number = -1
         frame_number = -1
@@ -105,6 +107,9 @@ class Traffic_counter():
             os.makedirs(self.image_dir)
 
         self.main()
+        # if self.make_video == 'yes':
+        #     create_video().create(img_dir=self.image_dir)
+
         data = {"success": True,
                 "Message": None,
                 "data": "Done"

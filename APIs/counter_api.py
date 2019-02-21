@@ -19,7 +19,7 @@ def all_data_of_instance_table():
                 if "EXIT_PTS" in data.keys() and data["EXIT_PTS"] is not "":
                     if "SHAPE" in data.keys() and data["SHAPE"] is not "":
                         print (np.array(data['EXIT_PTS']))
-                        data =  Traffic_counter(image_dir=data['IMAGE_DIR'],video_source=data['VIDEO_SOURCE'],exits_pts=np.array(data['EXIT_PTS']),shape=tuple(data['SHAPE'])).start_here()
+                        data =  Traffic_counter(image_dir=data['IMAGE_DIR'],video_source=data['VIDEO_SOURCE'],exits_pts=np.array(data['EXIT_PTS']),make_video = data['make_and_save_video'],shape=tuple(data['SHAPE'])).start_here()
                         return data
                     else:
                         data = {"success": False,
